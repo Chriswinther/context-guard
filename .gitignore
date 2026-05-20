@@ -9,3 +9,8 @@ build/
 .context-guard/
 .groundtruth/
 .groundtruth.yaml
+
+# Personal/deployment configs — context-guard.trade.toml holds a plaintext PAT; keep all out of git.
+context-guard.toml
+context-guard.trade.toml
+demo.context-guard.toml

@@ -30,6 +30,23 @@ def test_query_by_keyword_returns_matching_lines():
     assert "apples" not in result
 
 
+def test_query_by_keyword_windows_around_match_in_long_single_line():
+    """A keyword deep inside one very long physical line (e.g. a JSON-serialized
+    browser_evaluate result, where the logical newlines are escaped to '\\n')
+    must be RETURNED, not truncated away. Before the fix the matching line was
+    sliced [:max_chars] from its start, so a keyword sitting past max_chars was
+    dropped even though the line "matched" — query_fence returned a window that
+    did not contain the searched-for term. Found live-testing the Playwright MCP.
+    """
+    store = FenceStore(db_path=":memory:")
+    filler = "x" * 8000
+    content = f"HEAD {filler} NEEDLE_KW {filler} TAIL"  # one physical line, no newlines
+    handle = store.put(content, source="evaluate")
+    result = store.query(handle, query="NEEDLE_KW", max_chars=4000)
+    assert "NEEDLE_KW" in result, "keyword window must contain the searched term"
+    assert len(result) <= 4000
+
+
 def test_query_by_line_range():
     store = FenceStore(db_path=":memory:")
     content = "\n".join(f"row{i}" for i in range(10))

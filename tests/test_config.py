@@ -57,3 +57,40 @@ def test_server_without_command_raises(tmp_path):
     p.write_text("[servers.bad]\nargs = []\n")
     with pytest.raises(ValueError):
         load_config(p)
+
+
+HTTP_SAMPLE = """
+[servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+headers = { Authorization = "Bearer XYZ" }
+
+[servers.fs]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+"""
+
+
+def test_load_parses_http_server(tmp_path):
+    p = tmp_path / ".context-guard.toml"
+    p.write_text(HTTP_SAMPLE)
+    cfg = load_config(p)
+    gh = next(s for s in cfg.servers if s.name == "github")
+    assert gh.command is None
+    assert gh.url == "https://api.githubcopilot.com/mcp/"
+    assert gh.headers == {"Authorization": "Bearer XYZ"}
+    fs = next(s for s in cfg.servers if s.name == "fs")
+    assert fs.command == "npx" and fs.url is None
+
+
+def test_backends_from_config_emits_http_and_stdio_shapes(tmp_path):
+    from context_guard.server import _backends_from_config
+
+    p = tmp_path / ".context-guard.toml"
+    p.write_text(HTTP_SAMPLE)
+    cfg = load_config(p)
+    backends = _backends_from_config(cfg)["mcpServers"]
+    assert backends["github"]["url"] == "https://api.githubcopilot.com/mcp/"
+    assert backends["github"]["headers"] == {"Authorization": "Bearer XYZ"}
+    assert "command" not in backends["github"]
+    assert backends["fs"]["command"] == "npx"
+    assert "url" not in backends["fs"]

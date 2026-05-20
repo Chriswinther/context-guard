@@ -59,6 +59,46 @@ def test_run_fenced_timeout_returns_error_not_hang():
     assert "timeout" in out.lower()
 
 
+def test_run_fenced_resolves_bare_python_interpreter():
+    """Bug B: a bare 'python' command must run the interpreter, not hang.
+
+    On Windows bare 'python' resolves to the Microsoft Store app-execution-alias
+    stub which blocks forever in a non-interactive subprocess. run_fenced must
+    map it to the interpreter actually running context-guard (sys.executable).
+    """
+    store = FenceStore(db_path=":memory:")
+    tracker = UsageTracker()
+    out = run_fenced(
+        store, tracker, ["python", "-c", "print('viapython')"],
+        threshold_tokens=2000, timeout=30,
+    )
+    assert "viapython" in out
+
+
+def test_run_fenced_unknown_command_returns_friendly_error():
+    """Bug B: an unresolvable command must return a friendly message, not raise
+    a FileNotFoundError/WinError 2 out of the tool."""
+    store = FenceStore(db_path=":memory:")
+    tracker = UsageTracker()
+    out = run_fenced(
+        store, tracker, ["definitely_not_a_real_command_xyz123"],
+        threshold_tokens=2000, timeout=30,
+    )
+    assert "not found" in out.lower()
+
+
+def test_run_fenced_finds_pip_via_interpreter_scripts():
+    """Bug B regression for the exact live failure: bare 'pip' was 'not
+    recognized' because the interpreter's Scripts dir was not on the subprocess
+    PATH. run_fenced augments PATH with the interpreter dir + Scripts."""
+    store = FenceStore(db_path=":memory:")
+    tracker = UsageTracker()
+    out = run_fenced(
+        store, tracker, ["pip", "--version"], threshold_tokens=2000, timeout=60
+    )
+    assert "pip" in out.lower()
+
+
 def test_fetch_fenced_uses_injected_client_and_fences_large():
     store = FenceStore(db_path=":memory:")
     tracker = UsageTracker()

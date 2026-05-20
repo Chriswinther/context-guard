@@ -46,6 +46,10 @@ def fence_payload(
 from fastmcp.server.middleware import Middleware, MiddlewareContext  # noqa: E402
 from mcp.types import TextContent  # noqa: E402
 
+# context-guard's own tools return bounded text and must pass through verbatim;
+# everything else is a proxied/downstream tool that may be fenced.
+_OWN_TOOLS = {"query_fence", "context_report", "run_fenced", "fetch_fenced"}
+
 
 class FenceMiddleware(Middleware):
     """Intercepts every (proxied/mounted) tool call result; if the flattened text
@@ -58,6 +62,26 @@ class FenceMiddleware(Middleware):
         self.tracker = tracker
         self.threshold_tokens = threshold_tokens
 
+    async def on_list_tools(self, context: MiddlewareContext, call_next):
+        """Strip the advertised output schema from proxied (downstream) tools.
+
+        A fencing proxy replaces an oversized tool payload with a compact text
+        summary, so it cannot honor the downstream tool's declared output schema
+        (e.g. the filesystem read tool's schema requires a `content` field).
+        Advertising that schema makes a strict MCP client reject every fenced
+        reply ("Output validation error: 'content' is a required property").
+        For proxied tools the text content is the contract, so we drop the
+        schema; context-guard's own tools keep theirs.
+        """
+        tools = await call_next(context)
+        patched = []
+        for tool in tools:
+            if tool.name in _OWN_TOOLS or getattr(tool, "output_schema", None) is None:
+                patched.append(tool)
+            else:
+                patched.append(tool.model_copy(update={"output_schema": None}))
+        return patched
+
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         result = await call_next(context)
 
@@ -66,7 +90,7 @@ class FenceMiddleware(Middleware):
         # Do not re-fence context-guard's own retrieval/report tools — those
         # already return bounded text and must pass through verbatim so the
         # caller can read a handle's contents.
-        if tool_name in {"query_fence", "context_report", "run_fenced", "fetch_fenced"}:
+        if tool_name in _OWN_TOOLS:
             return result
 
         content = getattr(result, "content", result)
@@ -79,6 +103,11 @@ class FenceMiddleware(Middleware):
             threshold_tokens=self.threshold_tokens,
         )
         if fenced:
+            # Append a one-line cumulative savings readout. The tracker already
+            # recorded this call (in fence_payload), so the total is current.
+            # Only fenced calls carry it — small pass-through results stay clean.
+            total_saved = self.tracker.report()["_total"]["saved"]
+            new_text = f"{new_text}\n\n🛡️ tokens saved by context-guard: {total_saved:,}"
             result.content = [TextContent(type="text", text=new_text)]
             # Tools that declare an output schema (e.g. `-> str`) carry
             # structured_content; the MCP client validates that it is present.

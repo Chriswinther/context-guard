@@ -12,9 +12,14 @@ DEFAULT_CACHE_DIR = Path.home() / ".context-guard" / "cache"
 @dataclass
 class ServerSpec:
     name: str
-    command: str
+    # A server is EITHER a local stdio process (command/args/env) OR a remote
+    # endpoint (url/headers/transport). Exactly one of command/url is set.
+    command: str | None = None
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    url: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    transport: str | None = None
 
 
 @dataclass
@@ -35,14 +40,21 @@ def load_config(path: str | Path) -> Config:
 
     servers: list[ServerSpec] = []
     for name, spec in data.get("servers", {}).items():
-        if "command" not in spec:
-            raise ValueError(f"server '{name}' is missing required key 'command'")
+        has_command = "command" in spec
+        has_url = "url" in spec
+        if not has_command and not has_url:
+            raise ValueError(f"server '{name}' must set either 'command' (stdio) or 'url' (http)")
+        if has_command and has_url:
+            raise ValueError(f"server '{name}' sets both 'command' and 'url'; use exactly one")
         servers.append(
             ServerSpec(
                 name=name,
-                command=spec["command"],
+                command=spec.get("command"),
                 args=list(spec.get("args", [])),
                 env=dict(spec.get("env", {})),
+                url=spec.get("url"),
+                headers=dict(spec.get("headers", {})),
+                transport=spec.get("transport"),
             )
         )
     return Config(threshold_tokens=threshold, servers=servers)

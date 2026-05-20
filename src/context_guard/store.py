@@ -64,8 +64,27 @@ class FenceStore:
         if content is None:
             raise KeyError(handle)
         if query:
-            lines = [ln for ln in content.splitlines() if query.lower() in ln.lower()]
-            return "\n".join(lines)[:max_chars]
+            q = query.lower()
+            segments: list[str] = []
+            budget = max_chars
+            for ln in content.splitlines():
+                if q not in ln.lower():
+                    continue
+                if len(ln) <= budget:
+                    seg = ln
+                else:
+                    # The matching line is longer than the budget: window it
+                    # around the match so the keyword is not truncated away.
+                    # (A JSON-serialized payload can be one giant physical line.)
+                    idx = ln.lower().find(q)
+                    half = max(0, (budget - len(query)) // 2)
+                    start = max(0, idx - half)
+                    seg = ln[start : start + budget]
+                segments.append(seg)
+                budget -= len(seg) + 1
+                if budget <= 0:
+                    break
+            return "\n".join(segments)[:max_chars]
         if start_line is not None or end_line is not None:
             lines = content.splitlines()
             lo = start_line if start_line is not None else 0

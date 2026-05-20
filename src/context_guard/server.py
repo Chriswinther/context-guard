@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.server.providers.proxy import FastMCPProxy, StatefulProxyClient
 
 from context_guard.config import Config, load_config
 from context_guard.middleware import FenceMiddleware
@@ -21,13 +22,20 @@ from context_guard.tools import (
 from context_guard.usage import UsageTracker
 
 
+def _backend_entry(s: Any) -> dict[str, Any]:
+    """One FastMCP MCPConfig entry for a server spec: remote (url) or stdio."""
+    if s.url:
+        entry: dict[str, Any] = {"url": s.url}
+        if s.transport:
+            entry["transport"] = s.transport
+        if s.headers:
+            entry["headers"] = s.headers
+        return entry
+    return {"command": s.command, "args": s.args, "env": s.env}
+
+
 def _backends_from_config(cfg: Config) -> dict[str, Any]:
-    return {
-        "mcpServers": {
-            s.name: {"command": s.command, "args": s.args, "env": s.env}
-            for s in cfg.servers
-        }
-    }
+    return {"mcpServers": {s.name: _backend_entry(s) for s in cfg.servers}}
 
 
 def _is_fastmcp_mapping(backends: Any) -> bool:
@@ -55,15 +63,29 @@ def build_server(
         for namespace, backend in downstream_backends.items():
             proxy.mount(backend, namespace=namespace)
     elif downstream_backends is not None:
-        # An MCPConfig-style dict (already in {"mcpServers": {...}} shape).
-        proxy = FastMCP.as_proxy(downstream_backends, name="context-guard")
+        # An MCPConfig-style dict (already in {"mcpServers": {...}} shape). Proxy
+        # it with the same stateful client factory as the production path below,
+        # so a stateful downstream keeps its session state across calls (see the
+        # detailed rationale there).
+        backend = StatefulProxyClient(downstream_backends)
+        proxy = FastMCPProxy(client_factory=backend.new_stateful, name="context-guard")
     else:
-        # Production path: build an MCPConfig dict from the Config object so
-        # FastMCP.as_proxy can spawn and manage the downstream stdio processes.
-        # `config` must be a Config instance here (not a pre-wrapped dict).
+        # Production path: build an MCPConfig dict from the Config object and
+        # proxy it with a STATEFUL client factory.
+        #
+        # `FastMCP.as_proxy(config)` (the obvious choice) builds a *stateless*
+        # client factory that opens a fresh downstream session per request. For
+        # an MCPConfig with multiple servers that also respawns the subprocesses
+        # each call, so a stateful downstream (e.g. the Playwright browser) loses
+        # all session state between calls -- `navigate` lands on a page but the
+        # next `snapshot` sees about:blank. `StatefulProxyClient.new_stateful`
+        # caches one downstream session per proxy session and reuses it across
+        # calls (disconnecting on session exit). Safe over stdio, where there is
+        # a single Claude Code client (no concurrent-session context mixing).
         if config is None:
             raise ValueError("config required when downstream_backends is None")
-        proxy = FastMCP.as_proxy(_backends_from_config(config), name="context-guard")
+        backend = StatefulProxyClient(_backends_from_config(config))
+        proxy = FastMCPProxy(client_factory=backend.new_stateful, name="context-guard")
 
     proxy.add_middleware(FenceMiddleware(store, tracker, threshold_tokens))
 

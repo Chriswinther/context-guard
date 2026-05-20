@@ -1,7 +1,11 @@
 """Logic for context-guard's own tools. Pure functions wrapped by server.py."""
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
+import sys
+from pathlib import Path
 
 import httpx
 
@@ -42,6 +46,46 @@ def _fence_and_track(
     return res.text
 
 
+# Bare interpreter names that, on Windows, often resolve to the Microsoft Store
+# app-execution-alias stub — which blocks forever in a non-interactive
+# subprocess. Map these to the interpreter actually running context-guard.
+_PYTHON_NAMES = {"python", "python3", "python.exe", "python3.exe"}
+
+
+def _augmented_path() -> str:
+    """PATH with the running interpreter's dir + Scripts prepended, so sibling
+    tools (pip, ruff, …) installed alongside it resolve even when the host
+    launched context-guard with a stripped PATH."""
+    py_dir = Path(sys.executable).parent
+    return os.pathsep.join(
+        [str(py_dir), str(py_dir / "Scripts"), os.environ.get("PATH", "")]
+    )
+
+
+def _resolve_command(command: list[str], path: str) -> tuple[list[str] | None, str | None]:
+    """Resolve command[0] to a runnable executable, working around Windows
+    quirks. Returns (resolved_command, error_message); exactly one is non-None.
+    """
+    if not command:
+        return None, "run_fenced: empty command"
+    exe, *rest = command
+    if exe.lower() in _PYTHON_NAMES:
+        return [sys.executable, *rest], None
+    found = shutil.which(exe, path=path)
+    if found is None:
+        return None, (
+            f"run_fenced: command not found: {exe!r}. It is not on PATH for the "
+            f"context-guard process — use an absolute path or 'python -m <module>'."
+        )
+    if "windowsapps" in found.lower():
+        return None, (
+            f"run_fenced: {exe!r} resolves to a Microsoft Store alias stub "
+            f"({found}) which hangs non-interactively; refusing to run it. Use "
+            f"an absolute path to the real executable."
+        )
+    return [found, *rest], None
+
+
 def run_fenced(
     store: FenceStore,
     tracker: UsageTracker,
@@ -50,12 +94,24 @@ def run_fenced(
     threshold_tokens: int = 2000,
     timeout: int = 120,
 ) -> str:
+    path = _augmented_path()
+    resolved, err = _resolve_command(command, path)
+    if err is not None:
+        return err
+    env = {**os.environ, "PATH": path}
     try:
         proc = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout
+            resolved,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+            stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
         return f"run_fenced: timeout after {timeout}s: {command!r}"
+    except OSError as e:
+        return f"run_fenced: failed to start {command!r}: {e}"
     output = (proc.stdout or "") + (proc.stderr or "")
     return _fence_and_track(
         store, tracker, output, source="run_fenced", threshold_tokens=threshold_tokens
