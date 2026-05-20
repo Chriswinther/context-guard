@@ -1,0 +1,6 @@
+[fence]
+threshold_tokens = 2000
+
+[servers.everything]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-everything"]
