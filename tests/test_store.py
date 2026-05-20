@@ -48,10 +48,18 @@ def test_query_default_returns_head_when_no_args():
     assert len(result) <= 40
 
 
-def test_prune_evicts_oldest_over_cap():
+def test_put_auto_evicts_oldest_over_cap():
     store = FenceStore(db_path=":memory:", max_bytes=50)
     h1 = store.put("a" * 40, source="s")
+    h2 = store.put("b" * 40, source="s")  # put() auto-prunes -> evicts h1
+    assert store.get(h1) is None       # oldest auto-evicted on put
+    assert store.get(h2) == "b" * 40   # newest retained
+
+
+def test_prune_returns_count_removed():
+    store = FenceStore(db_path=":memory:", max_bytes=10_000_000)
+    store.put("a" * 40, source="s")
     store.put("b" * 40, source="s")
+    store.max_bytes = 50               # shrink cap below current total
     removed = store.prune()
     assert removed >= 1
-    assert store.get(h1) is None

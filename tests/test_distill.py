@@ -29,4 +29,10 @@ def test_distill_plain_text_keeps_head_and_tail():
 
 def test_distill_respects_max_chars_budget():
     out = distill("z" * 100000, max_chars=500)
-    assert len(out) <= 700
+    assert len(out) <= 520
+
+
+def test_distill_never_expands_small_multiline_input():
+    text = "\n".join(f"r{i}" for i in range(31))  # >30 lines but tiny
+    out = distill(text)
+    assert len(out) <= len(text)

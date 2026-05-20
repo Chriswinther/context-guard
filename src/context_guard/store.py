@@ -1,7 +1,7 @@
 """Local persistence for fenced raw outputs, with keyword + range retrieval.
 
-Backed by SQLite. A normal table holds the raw blob; an FTS5 virtual table
-indexes it for keyword retrieval via query_fence. Handles are short opaque ids.
+Backed by SQLite. A normal table holds the raw blob; retrieval uses per-line
+substring matching for keyword queries. Handles are short opaque ids.
 The proxy process is long-lived for a session, so handles stay valid until the
 size cap evicts the oldest entries.
 """
@@ -25,10 +25,6 @@ class FenceStore:
             "handle TEXT PRIMARY KEY, source TEXT, content TEXT, "
             "nbytes INTEGER, created REAL)"
         )
-        self._db.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS fences_fts "
-            "USING fts5(handle UNINDEXED, content)"
-        )
         self._db.commit()
 
     def put(self, content: str, *, source: str) -> str:
@@ -38,10 +34,8 @@ class FenceStore:
             "INSERT INTO fences VALUES (?,?,?,?,?)",
             (handle, source, content, nbytes, time.time()),
         )
-        self._db.execute(
-            "INSERT INTO fences_fts (handle, content) VALUES (?,?)", (handle, content)
-        )
         self._db.commit()
+        self.prune()
         return handle
 
     def get(self, handle: str) -> str | None:
@@ -67,7 +61,7 @@ class FenceStore:
             return "\n".join(lines)[:max_chars]
         if start_line is not None or end_line is not None:
             lines = content.splitlines()
-            lo = start_line or 0
+            lo = start_line if start_line is not None else 0
             hi = (end_line + 1) if end_line is not None else len(lines)
             return "\n".join(lines[lo:hi])[:max_chars]
         return content[:max_chars]
@@ -83,7 +77,6 @@ class FenceStore:
                 break
             handle, nbytes = row
             self._db.execute("DELETE FROM fences WHERE handle=?", (handle,))
-            self._db.execute("DELETE FROM fences_fts WHERE handle=?", (handle,))
             total -= nbytes
             removed += 1
         if removed:

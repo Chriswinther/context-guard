@@ -66,4 +66,6 @@ def _distill_text(content: str, *, max_chars: int) -> str:
         f"text output, {len(lines)} lines, {len(content)} chars.\n"
         f"--- head ---\n{head}\n--- tail ---\n{tail}"
     )
+    if len(body) >= len(content):
+        return content[:max_chars]
     return body[:max_chars]
