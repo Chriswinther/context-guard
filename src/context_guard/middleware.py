@@ -84,6 +84,8 @@ class FenceMiddleware(Middleware):
             # structured_content; the MCP client validates that it is present.
             # Overwrite it to the fenced text so the original payload does not
             # leak through structured_content / result.data.
+            # Guard for tools whose output_schema is None (string-returning tools
+            # always populate structured_content in fastmcp 3.3.1, so this normally fires).
             if getattr(result, "structured_content", None) is not None:
                 result.structured_content = {"result": new_text}
         return result

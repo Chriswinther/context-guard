@@ -7,3 +7,5 @@ build/
 .pytest_cache/
 .mypy_cache/
 .context-guard/
+.groundtruth/
+.groundtruth.yaml

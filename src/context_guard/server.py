@@ -58,7 +58,11 @@ def build_server(
         # An MCPConfig-style dict (already in {"mcpServers": {...}} shape).
         proxy = FastMCP.as_proxy(downstream_backends, name="context-guard")
     else:
-        assert config is not None, "config required when downstream_backends is None"
+        # Production path: build an MCPConfig dict from the Config object so
+        # FastMCP.as_proxy can spawn and manage the downstream stdio processes.
+        # `config` must be a Config instance here (not a pre-wrapped dict).
+        if config is None:
+            raise ValueError("config required when downstream_backends is None")
         proxy = FastMCP.as_proxy(_backends_from_config(config), name="context-guard")
 
     proxy.add_middleware(FenceMiddleware(store, tracker, threshold_tokens))

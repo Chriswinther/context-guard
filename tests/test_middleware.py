@@ -1,4 +1,3 @@
-import pytest
 
 from context_guard.middleware import extract_text, fence_payload
 from context_guard.store import FenceStore

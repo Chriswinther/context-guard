@@ -3,13 +3,13 @@ import sys
 import httpx
 
 from context_guard.store import FenceStore
-from context_guard.usage import UsageTracker
 from context_guard.tools import (
     context_report_text,
     fetch_fenced,
     query_fence,
     run_fenced,
 )
+from context_guard.usage import UsageTracker
 
 
 def test_query_fence_returns_slice():
