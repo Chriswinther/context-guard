@@ -11,7 +11,7 @@ import httpx
 
 from context_guard.fence import fence
 from context_guard.store import FenceStore
-from context_guard.usage import UsageTracker
+from context_guard.usage import UsageTracker, savings_readout
 
 
 def query_fence(
@@ -43,6 +43,11 @@ def _fence_and_track(
 ) -> str:
     res = fence(content, source=source, store=store, threshold_tokens=threshold_tokens)
     tracker.record(source, original_tokens=res.original_tokens, returned_tokens=res.returned_tokens)
+    # Parity with the proxy middleware: a fenced result carries the cumulative
+    # savings readout; small pass-through results stay clean. The tracker is
+    # already updated above, so the total is current.
+    if res.fenced:
+        return f"{res.text}\n\n{savings_readout(tracker)}"
     return res.text
 
 

@@ -9,7 +9,7 @@ from typing import Any
 
 from context_guard.fence import fence
 from context_guard.store import FenceStore
-from context_guard.usage import UsageTracker
+from context_guard.usage import UsageTracker, savings_readout
 
 
 def extract_text(content: Any) -> str:
@@ -106,8 +106,9 @@ class FenceMiddleware(Middleware):
             # Append a one-line cumulative savings readout. The tracker already
             # recorded this call (in fence_payload), so the total is current.
             # Only fenced calls carry it — small pass-through results stay clean.
-            total_saved = self.tracker.report()["_total"]["saved"]
-            new_text = f"{new_text}\n\n🛡️ tokens saved by context-guard: {total_saved:,}"
+            # Shared with the native fencing tools via savings_readout() so the
+            # two code paths cannot drift in wording.
+            new_text = f"{new_text}\n\n{savings_readout(self.tracker)}"
             result.content = [TextContent(type="text", text=new_text)]
             # Tools that declare an output schema (e.g. `-> str`) carry
             # structured_content; the MCP client validates that it is present.

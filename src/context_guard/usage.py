@@ -23,3 +23,15 @@ class UsageTracker:
             total_r += r
         out["_total"] = {"original": total_o, "returned": total_r, "saved": total_o - total_r}
         return out
+
+
+def savings_readout(tracker: UsageTracker) -> str:
+    """The one-line cumulative savings readout appended to every fenced result.
+
+    Shared by the proxy middleware (FenceMiddleware) and context-guard's own
+    fencing tools (run_fenced/fetch_fenced) so the two fencing paths cannot drift
+    in wording. Only fenced calls should carry it; small pass-through results
+    stay clean. The number is the running session total at call time.
+    """
+    total = tracker.report()["_total"]["saved"]
+    return f"🛡️ tokens saved by context-guard: {total:,}"

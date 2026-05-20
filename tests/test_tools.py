@@ -1,3 +1,4 @@
+import re
 import sys
 
 import httpx
@@ -10,6 +11,11 @@ from context_guard.tools import (
     run_fenced,
 )
 from context_guard.usage import UsageTracker
+
+
+def _readout_total(text: str) -> int | None:
+    m = re.search(r"tokens saved by context-guard: ([\d,]+)", text)
+    return int(m.group(1).replace(",", "")) if m else None
 
 
 def test_query_fence_returns_slice():
@@ -44,6 +50,33 @@ def test_run_fenced_large_output_is_fenced():
     )
     assert "query_fence" in out
     assert tracker.report()["_total"]["saved"] > 0
+
+
+def test_run_fenced_large_output_appends_savings_readout():
+    """Parity with the proxy path: a fenced native tool result must also carry the
+    one-line cumulative '🛡️ tokens saved by context-guard: <N>' readout, where N
+    is the running session total. (Regression: only proxied tools carried it.)"""
+    store = FenceStore(db_path=":memory:")
+    tracker = UsageTracker()
+    out = run_fenced(
+        store,
+        tracker,
+        [sys.executable, "-c", "print('x' * 40000)"],
+        threshold_tokens=2000,
+    )
+    total = _readout_total(out)
+    assert total is not None and total > 0
+    assert total == tracker.report()["_total"]["saved"]
+
+
+def test_run_fenced_small_output_has_no_readout():
+    """Small pass-through results stay clean — no readout, matching the proxy path."""
+    store = FenceStore(db_path=":memory:")
+    tracker = UsageTracker()
+    out = run_fenced(
+        store, tracker, [sys.executable, "-c", "print('hello')"], threshold_tokens=2000
+    )
+    assert _readout_total(out) is None
 
 
 def test_run_fenced_timeout_returns_error_not_hang():
@@ -110,6 +143,21 @@ def test_fetch_fenced_uses_injected_client_and_fences_large():
         store, tracker, "https://example.com/big", threshold_tokens=2000, client=client
     )
     assert "query_fence" in out
+
+
+def test_fetch_fenced_large_output_appends_savings_readout():
+    """fetch_fenced, like run_fenced, must carry the cumulative savings readout
+    when it fences (parity with the proxy middleware path)."""
+    store = FenceStore(db_path=":memory:")
+    tracker = UsageTracker()
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, text="y" * 40000))
+    client = httpx.Client(transport=transport)
+    out = fetch_fenced(
+        store, tracker, "https://example.com/big", threshold_tokens=2000, client=client
+    )
+    total = _readout_total(out)
+    assert total is not None and total > 0
+    assert total == tracker.report()["_total"]["saved"]
 
 
 def test_context_report_text_summarizes_savings():
