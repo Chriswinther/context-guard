@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import secrets
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -19,7 +20,11 @@ class FenceStore:
         target = ":memory:" if db_path in (None, ":memory:") else str(db_path)
         if target != ":memory:":
             Path(target).parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(target)
+        # FastMCP executes tools (and middleware) on a thread pool, so the store
+        # is read/written from multiple threads. Allow cross-thread use of the
+        # single connection and serialize access with a lock.
+        self._lock = threading.RLock()
+        self._db = sqlite3.connect(target, check_same_thread=False)
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS fences ("
             "handle TEXT PRIMARY KEY, source TEXT, content TEXT, "
@@ -30,18 +35,20 @@ class FenceStore:
     def put(self, content: str, *, source: str) -> str:
         handle = "h_" + secrets.token_hex(4)
         nbytes = len(content.encode("utf-8"))
-        self._db.execute(
-            "INSERT INTO fences VALUES (?,?,?,?,?)",
-            (handle, source, content, nbytes, time.time()),
-        )
-        self._db.commit()
-        self.prune()
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO fences VALUES (?,?,?,?,?)",
+                (handle, source, content, nbytes, time.time()),
+            )
+            self._db.commit()
+            self.prune()
         return handle
 
     def get(self, handle: str) -> str | None:
-        row = self._db.execute(
-            "SELECT content FROM fences WHERE handle=?", (handle,)
-        ).fetchone()
+        with self._lock:
+            row = self._db.execute(
+                "SELECT content FROM fences WHERE handle=?", (handle,)
+            ).fetchone()
         return row[0] if row else None
 
     def query(
@@ -67,20 +74,23 @@ class FenceStore:
         return content[:max_chars]
 
     def prune(self) -> int:
-        total = self._db.execute("SELECT COALESCE(SUM(nbytes),0) FROM fences").fetchone()[0]
-        removed = 0
-        while total > self.max_bytes:
-            row = self._db.execute(
-                "SELECT handle, nbytes FROM fences ORDER BY created ASC LIMIT 1"
-            ).fetchone()
-            if not row:
-                break
-            handle, nbytes = row
-            self._db.execute("DELETE FROM fences WHERE handle=?", (handle,))
-            total -= nbytes
-            removed += 1
-        if removed:
-            self._db.commit()
+        with self._lock:
+            total = self._db.execute(
+                "SELECT COALESCE(SUM(nbytes),0) FROM fences"
+            ).fetchone()[0]
+            removed = 0
+            while total > self.max_bytes:
+                row = self._db.execute(
+                    "SELECT handle, nbytes FROM fences ORDER BY created ASC LIMIT 1"
+                ).fetchone()
+                if not row:
+                    break
+                handle, nbytes = row
+                self._db.execute("DELETE FROM fences WHERE handle=?", (handle,))
+                total -= nbytes
+                removed += 1
+            if removed:
+                self._db.commit()
         return removed
 
     def close(self) -> None:
