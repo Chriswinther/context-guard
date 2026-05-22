@@ -38,7 +38,7 @@ uvx context-guard
 For local development:
 
 ```bash
-git clone https://github.com/yourname/context-guard
+git clone https://github.com/Chriswinther/context-guard
 cd context-guard
 pip install -e ".[dev]"
 ```
